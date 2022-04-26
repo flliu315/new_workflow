@@ -1,0 +1,476 @@
+
+context("Install")
+
+test_that("install works when DESCRIPTION contains no dependencies", {
+  renv_tests_scope()
+  desc <- c("Type: Package", "Package: test")
+  writeLines(desc, con = "DESCRIPTION")
+  expect_length(install(), 0L)
+})
+
+test_that("requested version in DESCRIPTION file is honored", {
+
+  renv_tests_scope()
+
+  desc <- c(
+    "Type: Package",
+    "Package: test",
+    "Imports: bread (== 0.1.0), toast"
+  )
+  writeLines(desc, con = "DESCRIPTION")
+
+  install()
+
+  expect_true(renv_package_version("bread") == "0.1.0")
+
+})
+
+test_that("installation failure is well-reported", {
+
+  # TODO: test seems to fail because a connection gets
+  # left open by utils::package.skeleton()
+  skip_on_os("windows")
+
+  owd <- setwd(tempdir())
+  on.exit(setwd(owd), add = TRUE)
+
+  # init dummy library
+  library <- renv_scope_tempfile("renv-library-")
+  ensure_directory(library)
+
+  # dummy environment
+  envir <- new.env(parent = emptyenv())
+  envir[["hello"]] <- function() {}
+
+  # prepare dummy package
+  package <- "renv.dummy.package"
+  unlink(package, recursive = TRUE)
+  utils::package.skeleton(package, environment = envir)
+
+  # remove broken man files
+  unlink("renv.dummy.package/Read-and-delete-me")
+  unlink("renv.dummy.package/man", recursive = TRUE)
+
+  # give the package a build-time error
+  writeLines("parse error", con = file.path(package, "R/error.R"))
+
+  # try to build it and confirm error
+  record <- list(Package = package, Path = package)
+  renv_scope_options(renv.verbose = FALSE)
+  expect_error(renv_install_package_impl(record))
+
+})
+
+test_that("install forces update of dependencies as needed", {
+
+  # TODO: this fails on CRAN presumedly because the wrong
+  # version of the breakfast package is searched for; need
+  # to figure out where the repositories are getting changed.
+  skip_on_cran()
+  renv_tests_scope("breakfast")
+
+  # install the breakfast package
+  renv::install("breakfast")
+
+  # ensure its dependencies were installed
+  packages <- c("bread", "oatmeal", "toast")
+  for (package in packages)
+    expect_true(file.exists(renv_package_find(package)))
+
+  # remove breakfast
+  renv::remove("breakfast")
+
+  # modify 'toast' so that it's now too old
+  path <- renv_package_find("toast")
+  descpath <- file.path(path, "DESCRIPTION")
+  desc <- renv_description_read(descpath)
+  desc$Version <- "0.1.0"
+  renv_dcf_write(desc, file = descpath)
+
+  # try to install 'breakfast' again
+  renv::install("breakfast")
+
+  # validate that 'toast' was updated to 1.0.0
+  desc <- renv_description_read(package = "toast")
+  expect_equal(desc$Version, "1.0.0")
+
+})
+
+test_that("packages can be installed from sources", {
+
+  renv_tests_scope()
+  renv::init()
+
+  # get path to package sources in local repos
+  repos <- getOption("renv.tests.repos")
+  tarball <- file.path(repos, "src/contrib/bread_1.0.0.tar.gz")
+
+  # try to install it
+  renv::install(tarball)
+  expect_true(renv_package_version("bread") == "1.0.0")
+
+})
+
+test_that("various remote styles can be used during install", {
+  skip_on_cran()
+
+  renv_tests_scope()
+  renv::init()
+
+  # install CRAN latest
+  renv::install("bread")
+  expect_true(renv_package_installed("bread"))
+  expect_true(renv_package_version("bread") == "1.0.0")
+
+  # install from archive
+  renv::install("bread@0.1.0")
+  expect_true(renv_package_installed("bread"))
+  expect_true(renv_package_version("bread") == "0.1.0")
+
+  # install from github
+  renv::install("kevinushey/skeleton")
+  expect_true(renv_package_installed("skeleton"))
+  expect_true(renv_package_version("skeleton") == "1.0.1")
+
+  # install from github PR
+  renv::install("kevinushey/skeleton#1")
+  expect_true(renv_package_installed("skeleton"))
+  expect_true(renv_package_version("skeleton") == "1.0.2")
+
+  # install from branch
+  renv::install("kevinushey/skeleton@feature/version-bump")
+  expect_true(renv_package_installed("skeleton"))
+  expect_true(renv_package_version("skeleton") == "1.0.2")
+
+  # install from subdir
+  renv::install("kevinushey/subdir:subdir")
+  expect_true(renv_package_installed("subdir"))
+  expect_true(renv_package_version("subdir") == "0.0.0.9000")
+
+  # install from URL to zip
+  renv::install("https://github.com/kevinushey/skeleton/archive/master.zip")
+  expect_true(renv_package_installed("skeleton"))
+  expect_true(renv_package_version("skeleton") == "1.0.1")
+
+})
+
+test_that("Remotes fields in a project DESCRIPTION are respected", {
+  skip_on_cran()
+
+  renv_tests_scope()
+  renv_scope_options(repos = character())
+  renv::init()
+
+  desc <- c(
+    "Type: Package",
+    "Package: renv.test.package",
+    "Suggests: skeleton",
+    "Remotes: kevinushey/skeleton"
+  )
+
+  writeLines(desc, con = "DESCRIPTION")
+  renv::install()
+
+  record <- renv_snapshot_description(package = "skeleton")
+  expect_true(record$Source == "GitHub")
+
+})
+
+test_that("source packages in .zip files can be installed", {
+
+  renv_tests_scope()
+
+  dir <- tempfile("renv-ziptest-")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+
+  owd <- setwd(dir)
+  on.exit(setwd(owd), add = TRUE)
+
+  location <- download.packages("bread", destdir = tempdir())
+  path <- location[1, 2]
+  renv_archive_decompress(path, exdir = "bread")
+
+  zippath <- file.path(getwd(), "bread_1.0.0.zip")
+  setwd("bread")
+  status <- catchall(zip(zippath, files = ".", extras = "-q"))
+  setwd("..")
+
+  if (inherits(status, "condition"))
+    skip("could not zip archive")
+
+  install(zippath)
+  expect_true(renv_package_installed("bread"))
+
+})
+
+test_that("renv warns when installing an already-loaded package", {
+  skip_on_cran()
+  renv_tests_scope()
+  install("bread@1.0.0")
+  renv_namespace_load("bread")
+  expect_condition(install("bread@0.1.0"), class = "renv.install.restart_required")
+  renv_namespace_unload("bread")
+})
+
+test_that("renv::install() writes out Github fields for backwards compatibility", {
+  skip_on_cran()
+  renv_tests_scope()
+
+  install("rstudio/packrat")
+  descpath <- file.path(.libPaths()[1], "packrat/DESCRIPTION")
+  dcf <- renv_description_read(descpath)
+
+  expect_equal(dcf$RemoteRepo,     dcf$GithubRepo)
+  expect_equal(dcf$RemoteUsername, dcf$GithubUsername)
+  expect_equal(dcf$RemoteRef,      dcf$GithubRef)
+  expect_equal(dcf$RemoteSha,      dcf$GithubSHA1)
+
+})
+
+test_that("renv uses safe library paths on Windows", {
+  skip_if_not(renv_platform_windows())
+  renv_tests_scope()
+
+  goodlib <- "Research and Development"
+  expect_true(renv_libpaths_safe(goodlib) == goodlib)
+
+  badlib <- "R&D"
+  expect_false(renv_libpaths_safe(badlib) != badlib)
+
+  ensure_directory(badlib)
+  renv_libpaths_set(badlib)
+  install("bread")
+
+  descpath <- file.path(getwd(), "R&D/bread")
+  desc <- renv_description_read(descpath)
+
+  expect_true(desc$Package == "bread")
+  expect_true(desc$Version == "1.0.0")
+
+})
+
+test_that("renv uses safe library path when needed", {
+
+  renv_tests_scope()
+
+  badlib <- file.path(getwd(), "Has'Single'Quote")
+  dir.create(badlib)
+  expect_false(renv_libpaths_safe(badlib) == badlib)
+
+})
+
+test_that("renv can install packages from Bitbucket", {
+  skip_on_cran()
+  renv_tests_scope()
+  install("bitbucket::kevinushey/skeleton")
+  expect_true(renv_package_installed("skeleton"))
+})
+
+test_that("renv can install packages from GitHub using remotes subdir syntax", {
+  skip_on_cran()
+  skip_sometimes()
+  renv_tests_scope()
+  install("kevinushey/skeleton/subdir")
+  expect_true(renv_package_installed("skeleton"))
+  expect_true(renv_package_version("skeleton") == "1.1.0")
+})
+
+test_that("install via version succeeds", {
+  skip_on_cran()
+  renv_tests_scope()
+
+  install("bread@0.0.1")
+  expect_true(renv_package_installed("bread"))
+  expect_true(renv_package_version("bread") == "0.0.1")
+
+})
+
+test_that("install() installs inferred dependencies", {
+
+  skip_on_cran()
+  renv_tests_scope("breakfast")
+
+  # use dummy library path
+  templib <- renv_scope_tempfile("renv-library-")
+  ensure_directory(templib)
+  renv_scope_libpaths(templib)
+
+  # try installing packages
+  install()
+
+  # validate that we've installed breakfast + deps
+  expect_true(renv_package_installed("breakfast"))
+
+  # try calling install once more; nothing should happen
+  records <- install()
+  expect_length(records, 0L)
+
+})
+
+test_that("install() prefers cellar when available", {
+
+  skip_on_cran()
+  renv_tests_scope()
+
+  root <- renv_tests_root()
+  locals <- paste(
+    file.path(root, "nowhere"),
+    file.path(root, "local"),
+    sep = ";"
+  )
+
+  renv_scope_options(renv.config.cache.enabled = FALSE)
+  renv_scope_envvars(RENV_PATHS_CELLAR = locals)
+
+  records <- install("skeleton")
+
+  record <- records$skeleton
+  expect_equal(record$Source, "Cellar")
+
+  prefix <- if (renv_platform_windows()) "file:///" else "file://"
+  uri <- paste0(prefix, root, "/local/skeleton")
+  expect_equal(attr(record, "url"), uri)
+
+})
+
+test_that("packages can be installed from the archive w/libcurl", {
+  skip_on_cran()
+
+  # validate that we have libcurl
+  ok <- identical(capabilities("libcurl"), c(libcurl = TRUE))
+  skip_if(!ok, "libcurl is not available")
+
+  # perform test
+  renv_tests_scope()
+  renv_scope_envvars(RENV_DOWNLOAD_FILE_METHOD = "libcurl")
+  install("bread@0.1.0")
+  expect_true(renv_package_installed("bread"))
+  expect_equal(renv_package_version("bread"), "0.1.0")
+
+})
+
+test_that("issue #609", {
+  skip_on_cran()
+
+  renv_tests_scope()
+
+  options(configure.vars = c(breakfast = ""))
+  install("bread")
+  expect_true(renv_package_installed("bread"))
+})
+
+test_that("we can install packages from git remotes within subdirs", {
+
+  skip_on_cran()
+  skip_on_ci()
+  skip("unreliable test")
+
+  renv_tests_scope("subdir")
+
+  install("git@github.com:kevinushey/subdir.git:subdir", rebuild = TRUE)
+  expect_true(renv_package_installed("subdir"))
+
+  snapshot()
+
+  remove("subdir")
+  expect_false(renv_package_installed("subdir"))
+
+  restore(packages = "subdir", rebuild = TRUE)
+  expect_true(renv_package_installed("subdir"))
+
+})
+
+test_that("packages embedded in the project use a project-local RemoteURL", {
+
+  skip_if(getRversion() < "4.1")
+  skip_if_not_installed("usethis")
+
+  renv_tests_scope("example")
+
+  usethis <- renv_namespace_load("usethis")
+  skip_if(is.null(usethis$create_package))
+  renv_scope_options(usethis.quiet = TRUE)
+  unlink("example", recursive = TRUE)
+  usethis$create_package("example", rstudio = FALSE, open = FALSE)
+
+  install("./example")
+  lockfile <- snapshot(lockfile = NULL)
+  expect_equal(lockfile$Packages$example$RemoteUrl, "./example")
+
+  # TODO: if the user provides a "weird" path, we'll use it as-is.
+  # is that okay? what about relative paths that resolve outside of
+  # the project root directory?
+  install("./././example")
+  lockfile <- snapshot(lockfile = NULL)
+  expect_equal(lockfile$Packages$example$RemoteUrl, "./././example")
+
+})
+
+test_that("packages installed from cellar via direct path", {
+
+  skip_on_cran()
+  renv_tests_scope("skeleton")
+
+  root <- renv_tests_root()
+  locals <- paste(
+    file.path(root, "nowhere"),
+    file.path(root, "local"),
+    sep = ";"
+  )
+
+  renv_scope_options(renv.config.cache.enabled = FALSE)
+  renv_scope_envvars(RENV_PATHS_CELLAR = locals)
+
+  path <- file.path(root, "local/skeleton/skeleton_1.0.1.tar.gz")
+  records <- install(path, rebuild = TRUE)
+  expect_equal(records$skeleton$Source, "Cellar")
+
+  lockfile <- snapshot(lockfile = NULL)
+  expect_equal(lockfile$Packages$skeleton$Source, "Cellar")
+
+})
+
+test_that("staging library path has same permissions as library path", {
+
+  skip_on_cran()
+  skip_on_windows()
+
+  renv_tests_scope()
+
+  library <- renv_paths_library()
+  ensure_directory(library)
+  renv_scope_libpaths(library)
+
+  umask <- Sys.umask("0")
+  Sys.chmod(library, "0775")
+  Sys.umask(umask)
+
+  staging <- renv_install_staged_library_path()
+  expect_equal(file.mode(staging), file.mode(library))
+
+})
+
+test_that("packages installed from a RemoteSubdir can be retrieved from cache", {
+
+  skip_on_cran()
+  skip_on_windows()
+  skip_sometimes()
+
+  renv_tests_scope()
+  cachepath <- renv_scope_tempfile("renv-cache-")
+  ensure_directory(cachepath)
+  renv_scope_envvars(RENV_PATHS_CACHE = cachepath)
+
+  init()
+
+  # install first from remote
+  install("kevinushey/subdir:subdir")
+
+  # remove, and re-install from cache
+  remove("subdir")
+  install("kevinushey/subdir:subdir")
+
+  expect_true(renv_package_installed("subdir"))
+
+})

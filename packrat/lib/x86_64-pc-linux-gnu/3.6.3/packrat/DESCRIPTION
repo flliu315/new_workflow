@@ -1,0 +1,27 @@
+Package: packrat
+Type: Package
+Title: A Dependency Management System for Projects and their R Package
+    Dependencies
+Version: 0.7.0
+Author: Kevin Ushey, Jonathan McPherson, Joe Cheng, Aron Atkins, JJ
+    Allaire
+Maintainer: Aron Atkins <aron@rstudio.com>
+Description: Manage the R packages your project depends on in an
+    isolated, portable, and reproducible way.
+License: GPL-2
+Depends: R (>= 3.0.0)
+Imports: tools, utils
+Suggests: testthat (>= 3.0.0), devtools, httr, knitr, rmarkdown
+URL: https://github.com/rstudio/packrat/
+BugReports: https://github.com/rstudio/packrat/issues
+RoxygenNote: 7.1.1
+Encoding: UTF-8
+Config/testthat/edition: 3
+NeedsCompilation: no
+Packaged: 2021-08-19 20:08:05 UTC; aron
+Repository: CRAN
+Date/Publication: 2021-08-20 15:20:02 UTC
+Built: R 3.6.3; ; 2022-04-26 07:20:21 UTC; unix
+InstallAgent: packrat 0.7.0
+InstallSource: CRAN
+Hash: 3d49688287bd2246cd8a58e233be39d5

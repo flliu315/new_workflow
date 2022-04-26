@@ -1,0 +1,6 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+scripts/00_packages.R
+scripts/02_sessionInfo.R

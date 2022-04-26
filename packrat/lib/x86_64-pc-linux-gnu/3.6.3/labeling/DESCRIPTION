@@ -1,0 +1,20 @@
+Package: labeling
+Type: Package
+Title: Axis Labeling
+Version: 0.4.2
+Date: 2020-10-15
+Author: Justin Talbot,
+Maintainer: Nuno Sempere <nuno.semperelh@gmail.com>
+Description: Functions which provide a range of axis labeling
+    algorithms.
+License: MIT + file LICENSE | Unlimited
+Collate: 'labeling.R'
+NeedsCompilation: no
+Imports: stats, graphics
+Packaged: 2020-10-18 12:56:46 UTC; nuno
+Repository: CRAN
+Date/Publication: 2020-10-20 07:00:09 UTC
+Built: R 3.6.3; ; 2022-04-26 07:24:17 UTC; unix
+InstallAgent: packrat 0.7.0
+InstallSource: CRAN
+Hash: 7474c78957f4e01d1dd4c04217eab244
